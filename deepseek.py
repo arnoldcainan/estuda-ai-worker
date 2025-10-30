@@ -3,7 +3,6 @@ import os, requests
 from flask import current_app
 
 
-# NOVO: Classe Wrapper DeepSeekLLM para compatibilidade com LangChain
 class DeepSeekLLM:
     """
     Classe Wrapper para usar a função chat do DeepSeek em contextos como LangChain.
@@ -17,19 +16,13 @@ class DeepSeekLLM:
         """
         Adapta a chamada de string única do LangChain para o formato de mensagens da API.
         """
-        # --- CORREÇÃO ADICIONADA ---
-        # O 'prompt' que vem do LangChain não é uma string, é um PromptValue.
-        # Precisamos convertê-lo para string primeiro.
         if hasattr(prompt, 'to_string'):
             prompt_str = prompt.to_string()
         else:
             prompt_str = str(prompt)
-        # --- FIM DA CORREÇÃO ---
 
-        # Agora usamos a string convertida
         messages = [{"role": "user", "content": prompt_str}]
 
-        # Chama sua função chat existente
         return chat(
             messages=messages,
             model=self.model,
@@ -46,7 +39,7 @@ class DeepSeekError(Exception):
         super().__init__(public_msg)
         self.public_msg = public_msg
         self.http_status = http_status
-        self.detail = detail  # detalhes só pra log
+        self.detail = detail
 
 def _cfg(key, default=None):
     return (current_app.config.get(key) if current_app else None) or os.getenv(key, default)
@@ -57,7 +50,6 @@ def chat(messages: list, model: str = "deepseek-chat", temperature: float = 0.7,
     if not api_key:
         raise DeepSeekError("Serviço de IA não configurado.", detail="DEEPSEEK_API_KEY ausente")
 
-    # timeouts e limites configuráveis
     req_timeout = timeout or int(_cfg('AI_TIMEOUT_SECONDS', 90))     # antes era 30s
     max_tokens  = int(_cfg('AI_MAX_TOKENS', 1200))                   # limite p/ resposta
 
@@ -70,7 +62,6 @@ def chat(messages: list, model: str = "deepseek-chat", temperature: float = 0.7,
     }
 
     try:
-        # tempo de conexão curto + leitura longa
         resp = requests.post(endpoint, json=payload, headers=headers, timeout=(10, req_timeout))
     except requests.RequestException as e:
         raise DeepSeekError("Falha de conexão com o serviço de IA. Tente novamente mais tarde.", detail=str(e))

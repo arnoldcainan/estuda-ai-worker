@@ -3,21 +3,12 @@ import json
 import time
 import os
 import logging
-import requests
-from sqlalchemy import text
 
-# Configuração de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
-# --- IMPORTS DO CORE DO WORKER ---
-# Importa o setup de DB e os modelos JÁ LIGADOS
-# O erro anterior ocorria aqui se db_config falhasse ao importar models_core
 from db_config import worker_app, database, Estudo, Questao
-# Importa a lógica de IA do arquivo local
 from ai_processor import process_study_material
-
-# ----------------------------------
 
 # --- Configurações do RabbitMQ: Lendo do .env ---
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
@@ -26,9 +17,6 @@ RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'guest')
 RABBITMQ_PASS = os.getenv('RABBITMQ_PASS', 'guest')
 RABBITMQ_VHOST = os.getenv('RABBITMQ_VHOST', '/')
 QUEUE_NAME = 'ai_task_queue'
-
-
-# -----------------------------------------------
 
 def update_db_on_failure(estudo_id, error_msg):
     """Atualiza o status do DB quando a IA falha."""
@@ -54,7 +42,6 @@ def callback(ch, method, properties, body):
     estudo_id = payload.get('estudo_id')
     file_path = payload.get('file_path')
 
-    # Validação básica do payload
     if not estudo_id or not file_path:
         log.error(f"Mensagem inválida recebida (sem estudo_id ou file_path): {payload}")
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)  # Rejeita a mensagem
@@ -62,7 +49,6 @@ def callback(ch, method, properties, body):
 
     log.info(f"Recebida Tarefa para Estudo ID: {estudo_id}. Arquivo: {file_path}")
 
-    # --- 1. CHAMA O PROCESSO DE IA BLOQUEANTE ---
     try:
         log.info(f"[AI WORKER] Verificando existência do arquivo em: {file_path}")
         if not os.path.exists(file_path):
@@ -70,13 +56,11 @@ def callback(ch, method, properties, body):
             raise FileNotFoundError(f"Arquivo {file_path} não encontrado.")
 
         log.info(f"Arquivo {file_path} encontrado. Iniciando IA...")
-        ia_result = process_study_material(file_path)  # Assumindo que está no mesmo diretório
+        ia_result = process_study_material(file_path)
 
         if ia_result['status'] == 'completed':
 
-            # 2. PERSISTÊNCIA DOS RESULTADOS NO DB
             with worker_app.app_context():
-                # Agora 'Estudo' e 'Questao' são os modelos reais do DB
                 estudo = database.session.get(Estudo, estudo_id)
                 if estudo:
                     estudo.resumo = ia_result['resumo']
@@ -98,35 +82,28 @@ def callback(ch, method, properties, body):
                     database.session.commit()
                     log.info(f"Sucesso! Estudo ID {estudo_id} atualizado para 'pronto' e QCM salvo.")
 
-                    # 3. Limpa o arquivo local
                     try:
                         os.remove(file_path)
                         log.info(f"Arquivo temporário {file_path} removido.")
                     except OSError as e:
                         log.error(f"Erro ao remover arquivo {file_path}: {e}")
 
-                # --- SUCESSO: ENVIA O ACK ---
                 ch.basic_ack(delivery_tag=method.delivery_tag)
                 log.info(f"Tarefa {estudo_id} concluída com sucesso e ACK enviado.")
 
         else:
-            # Se o status da IA for 'failed'
             error_msg = ia_result.get('error', 'Erro desconhecido da IA.')
-            # Lança uma exceção para ser pega pelo bloco 'except' abaixo
             raise Exception(f"Falha no processamento de IA: {error_msg}")
 
     except FileNotFoundError as e:
         log.error(f"Erro de Arquivo para ID {estudo_id}: {e}")
         update_db_on_failure(estudo_id, f"Erro: Arquivo original não encontrado ou inacessível.")
-        # Rejeita a mensagem (NACK) - não adianta tentar de novo (requeue=False)
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except Exception as e:
-        # Pega a falha da IA ou qualquer outro erro de execução
+
         log.exception(f"ERRO DE EXECUÇÃO no Worker para ID {estudo_id}: {e}")
         update_db_on_failure(estudo_id, f"Erro interno do Worker: {str(e)[:500]}")
-        # Rejeita a mensagem (NACK) - não tente de novo por enquanto (requeue=False)
-        # Mude para requeue=True se quiser que ele tente novamente após uma falha
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     # REMOVA o 'basic_ack' que estava aqui fora

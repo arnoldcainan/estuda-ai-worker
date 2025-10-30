@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy import ForeignKey, Boolean, Text, Integer, String, DateTime
 from pytz import timezone
 import json
-# IMPORTANTE: O Worker também precisa saber sobre o UserMixin
 from flask_login import UserMixin
 
 
@@ -22,7 +21,6 @@ def define_models(db_instance):
     """
 
     # --- MODELO USUARIO (COPIADO DO FLASK) ---
-    # O Worker precisa saber que esta tabela existe para a Foreign Key funcionar
     class Usuario(db_instance.Model, UserMixin):
         __tablename__ = 'usuario'  # Garante o mesmo nome de tabela do Flask
         id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -36,7 +34,6 @@ def define_models(db_instance):
         is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
         is_validated: Mapped[bool] = mapped_column(Boolean, default=False)
 
-        # Relação necessária para o back_populates do Estudo
         estudos: Mapped[list["Estudo"]] = relationship("Estudo", back_populates="usuario")
 
     # --- MODELO ESTUDO ---
@@ -78,6 +75,5 @@ def define_models(db_instance):
             except json.JSONDecodeError:
                 return []
 
-    # Retorna TODOS os modelos
     return Usuario, Estudo, Questao
 
