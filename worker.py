@@ -4,13 +4,15 @@ import time
 import os
 import logging
 
+# Configuração de Logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
+# Imports do Projeto
 from db_config import worker_app, database, Estudo, Questao
 from ai_processor import process_study_material
 
-# --- Configurações do RabbitMQ: Lendo do .env ---
+# --- Configurações do RabbitMQ ---
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', 5672))
 RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'guest')
@@ -18,15 +20,20 @@ RABBITMQ_PASS = os.getenv('RABBITMQ_PASS', 'guest')
 RABBITMQ_VHOST = os.getenv('RABBITMQ_VHOST', '/')
 QUEUE_NAME = 'ai_task_queue'
 
+# --- CONFIGURAÇÃO DE CAMINHOS (CRÍTICO PARA O DOCKER) ---
+# Define onde os uploads estão montados dentro do container Linux.
+# Assumindo que seu Dockerfile define WORKDIR como /app e copia o projeto para lá.
+BASE_DIR = os.getcwd()
+UPLOAD_FOLDER_WORKER = os.path.join(BASE_DIR, 'app', 'static', 'uploads')
+
+
 def update_db_on_failure(estudo_id, error_msg):
     """Atualiza o status do DB quando a IA falha."""
     with worker_app.app_context():
         try:
-            # Usa a classe Estudo importada
-            estudo = database.session.get(Estudo, estudo_id)  # Usar session.get para SQLAlchemy 2.0+
+            estudo = database.session.get(Estudo, estudo_id)
             if estudo:
                 estudo.status = 'falha'
-                # Limita a mensagem de erro
                 estudo.resumo = f"Falha no processamento: {error_msg[:1000]}"
                 database.session.commit()
                 log.error(f"Tarefa {estudo_id} falhou. Status atualizado no DB.")
@@ -38,38 +45,51 @@ def update_db_on_failure(estudo_id, error_msg):
 def callback(ch, method, properties, body):
     """Função chamada quando uma nova mensagem é recebida da fila."""
 
-    payload = json.loads(body)
-    estudo_id = payload.get('estudo_id')
-    file_path = payload.get('file_path')
-
-    if not estudo_id or not file_path:
-        log.error(f"Mensagem inválida recebida (sem estudo_id ou file_path): {payload}")
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)  # Rejeita a mensagem
-        return
-
-    log.info(f"Recebida Tarefa para Estudo ID: {estudo_id}. Arquivo: {file_path}")
-
     try:
-        log.info(f"[AI WORKER] Verificando existência do arquivo em: {file_path}")
-        if not os.path.exists(file_path):
-            log.error(f"Arquivo {file_path} não encontrado no Worker para Estudo ID {estudo_id}.")
-            raise FileNotFoundError(f"Arquivo {file_path} não encontrado.")
+        payload = json.loads(body)
 
-        log.info(f"Arquivo {file_path} encontrado. Iniciando IA...")
+        # 1. Ler o ID e o NOME DO ARQUIVO (filename)
+        # Nota: O Flask agora envia 'filename', não mais o caminho completo 'file_path'
+        estudo_id = payload.get('estudo_id')
+        filename = payload.get('filename')
+
+        # Validação Básica
+        if not estudo_id or not filename:
+            log.error(f"Mensagem inválida recebida (sem estudo_id ou filename): {payload}")
+            # Rejeita sem recolocar na fila para evitar loop infinito de erro
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        # 2. Reconstruir o caminho completo no ambiente Linux
+        file_path = os.path.join(UPLOAD_FOLDER_WORKER, filename)
+
+        log.info(f"Recebida Tarefa para Estudo ID: {estudo_id}. Arquivo: {filename}")
+        log.info(f"[AI WORKER] Buscando arquivo em: {file_path}")
+
+        # 3. Verificar se o arquivo existe (Volume do Docker)
+        if not os.path.exists(file_path):
+            log.error(f"Arquivo não encontrado no caminho: {file_path}")
+            log.error(f"Verifique se o volume do Docker está mapeado corretamente em {UPLOAD_FOLDER_WORKER}")
+            raise FileNotFoundError(f"Arquivo {filename} não encontrado no disco.")
+
+        log.info("Arquivo encontrado. Iniciando processamento de IA...")
+
+        # 4. Processar com a IA
         ia_result = process_study_material(file_path)
 
         if ia_result['status'] == 'completed':
-
             with worker_app.app_context():
                 estudo = database.session.get(Estudo, estudo_id)
                 if estudo:
                     estudo.resumo = ia_result['resumo']
                     estudo.status = 'pronto'
 
+                    # Limpa questões antigas se houver (reprocessamento)
                     qcm_data = ia_result['qcm_json']
                     Questao.query.filter_by(estudo_id=estudo.id).delete()
                     database.session.flush()
 
+                    # Salva novas questões
                     for q_data in qcm_data['questoes']:
                         nova_questao = Questao(
                             estudo_id=estudo.id,
@@ -80,43 +100,43 @@ def callback(ch, method, properties, body):
                         database.session.add(nova_questao)
 
                     database.session.commit()
-                    log.info(f"Sucesso! Estudo ID {estudo_id} atualizado para 'pronto' e QCM salvo.")
+                    log.info(f"Sucesso! Estudo ID {estudo_id} salvo e pronto.")
 
+                    # Remove arquivo temporário
                     try:
                         os.remove(file_path)
-                        log.info(f"Arquivo temporário {file_path} removido.")
+                        log.info(f"Arquivo temporário {filename} removido.")
                     except OSError as e:
-                        log.error(f"Erro ao remover arquivo {file_path}: {e}")
+                        log.warning(f"Não foi possível remover arquivo {filename}: {e}")
 
+                # Confirma sucesso para o RabbitMQ
                 ch.basic_ack(delivery_tag=method.delivery_tag)
-                log.info(f"Tarefa {estudo_id} concluída com sucesso e ACK enviado.")
+                log.info(f"Tarefa {estudo_id} finalizada.")
 
         else:
             error_msg = ia_result.get('error', 'Erro desconhecido da IA.')
-            raise Exception(f"Falha no processamento de IA: {error_msg}")
+            raise Exception(f"Retorno de falha da IA: {error_msg}")
 
     except FileNotFoundError as e:
-        log.error(f"Erro de Arquivo para ID {estudo_id}: {e}")
-        update_db_on_failure(estudo_id, f"Erro: Arquivo original não encontrado ou inacessível.")
+        log.error(f"Erro de Arquivo ID {estudo_id}: {e}")
+        update_db_on_failure(estudo_id, "Arquivo não encontrado no servidor.")
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except Exception as e:
-
-        log.exception(f"ERRO DE EXECUÇÃO no Worker para ID {estudo_id}: {e}")
-        update_db_on_failure(estudo_id, f"Erro interno do Worker: {str(e)[:500]}")
+        log.exception(f"ERRO DE EXECUÇÃO ID {estudo_id}: {e}")
+        update_db_on_failure(estudo_id, f"Erro interno: {str(e)[:500]}")
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-    # REMOVA o 'basic_ack' que estava aqui fora
 
 def start_worker():
-    """Inicia a conexão e o consumo de mensagens."""
+    """Inicia a conexão e o consumo de mensagens com retry logic."""
     log.info("------------------------------------------------")
-    log.info("AI-WORKER: Tentando conectar ao RabbitMQ...")
-    log.info(f"Host: {RABBITMQ_HOST}, User: {RABBITMQ_USER}, VHost: {RABBITMQ_VHOST}")
+    log.info("AI-WORKER INICIANDO...")
+    log.info(f"Host: {RABBITMQ_HOST}:{RABBITMQ_PORT}")
     log.info("------------------------------------------------")
 
-    retries = 5
-    for attempt in range(retries):
+    retries = 0
+    while True:  # Loop infinito para manter o worker vivo tentando reconectar
         connection = None
         try:
             credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
@@ -130,57 +150,40 @@ def start_worker():
                 )
             )
             channel = connection.channel()
-            # Garante que a fila existe e é durável
             channel.queue_declare(queue=QUEUE_NAME, durable=True)
 
-            log.info(f"Conexão bem-sucedida! Escutando fila: {QUEUE_NAME}")
-
-            # Processa apenas uma mensagem por vez
+            # Define QoS para não sobrecarregar a IA (1 por vez)
             channel.basic_qos(prefetch_count=1)
-            # Inicia o consumo
-            channel.basic_consume(queue=QUEUE_NAME, on_message_callback=callback)
 
-            log.info("Aguardando mensagens... (Pressione CTRL+C para sair)")
-            channel.start_consuming()  # Bloqueia aqui
+            log.info(f"Conectado! Aguardando tarefas na fila '{QUEUE_NAME}'...")
+
+            channel.basic_consume(queue=QUEUE_NAME, on_message_callback=callback)
+            channel.start_consuming()
 
         except pika.exceptions.AMQPConnectionError as e:
-            log.warning(f"Tentativa {attempt + 1}/{retries} falhou: Falha na conexão AMQP. Esperando 5s... Erro: {e}")
-            time.sleep(5)
+            retries += 1
+            wait_time = min(retries * 2, 30)  # Backoff exponencial até 30s
+            log.warning(f"Falha na conexão (Tentativa {retries}). Reconectando em {wait_time}s... Erro: {e}")
+            time.sleep(wait_time)
 
         except KeyboardInterrupt:
-            log.info("Encerrando worker por comando do usuário...")
+            log.info("Parando worker...")
             if connection and connection.is_open:
                 connection.close()
             break
-
         except Exception as e:
-            log.critical(f"Erro fatal ao iniciar worker: {e}", exc_info=True)
-            if connection and connection.is_open:
-                connection.close()
-            break
-
-    log.info("AI-WORKER finalizado.")
+            log.critical(f"Erro inesperado no loop principal: {e}", exc_info=True)
+            time.sleep(5)  # Espera antes de tentar reiniciar para não floodar logs
 
 
 if __name__ == '__main__':
-    # Cria o contexto inicial APENAS para garantir que a conexão funciona
+    # Verificação inicial do Banco de Dados
     with worker_app.app_context():
-        log.info("Verificando conexão com o banco de dados...")
         try:
-            # # Tenta uma operação simples para verificar a conexão
-            # # (Você precisará de 'from sqlalchemy import text' no topo)
-            # database.session.execute(text('SELECT 1'))
-            # log.info("Conexão com o DB verificada com sucesso.")
-
-            # CORRIGIDO: Recria o create_all()
-            database.create_all()  # Garante que todas as tabelas existam
-            log.info("Verificação/Criação de tabelas do DB concluída.")
-
-
+            database.create_all()
+            log.info("Banco de dados verificado/inicializado.")
         except Exception as e:
-            log.critical(f"Erro CRÍTICO ao conectar ao DB no início: {e}", exc_info=True)
-            exit(1)  # Não continua se o DB não estiver acessível
+            log.critical(f"Não foi possível conectar ao DB: {e}")
+            # Opcional: exit(1) se o DB for obrigatório para iniciar
 
-    # REMOVIDO: database.create_all()
-
-    start_worker()  # Inicia o loop principal do worker
+    start_worker()
