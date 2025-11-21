@@ -50,21 +50,64 @@ def process_study_material(file_path: str, titulo: Optional[str] = "Estudo Gerad
             chunk_overlap=200
         )
         texts = text_splitter.create_documents([full_text])
-        context_text = texts[0].page_content if texts else full_text[:8000]
+        context_text = texts[0].page_content if texts else full_text[:80000]
 
         llm = DeepSeekLLM()
 
         resumo_prompt = PromptTemplate.from_template(
-            "Você é um tutor especializado. Crie um resumo conciso, didático e focado em pontos-chave a partir do texto a seguir. O resumo deve ter no máximo 300 palavras. TEXTO: {text}"
+            """
+            Você é um Professor Sênior de Cursinho Preparatório, especialista em sintetizar conteúdos complexos para estudantes de alto rendimento.
+            
+            Sua missão é transformar o texto bruto fornecido em um guia de estudo estratégico. Não apenas resuma; ensine.
+
+            ESTRUTURA OBRIGATÓRIA DE SAÍDA:
+
+            ## 🎯 Objetivo Central & Tese
+            (Explique em 1 parágrafo denso: Qual problema o texto resolve? Qual a posição central do autor?)
+
+            ## 🧠 Mapa Mental em Texto
+            (Liste os 3 a 5 grandes pilares do texto. Para cada pilar, explique a lógica interna. Use Setas '->' para mostrar causa e consequência)
+
+            ## 🔑 Dicionário de Conceitos
+            (Extraia termos técnicos ou definições chave. Formato: **Termo**: Definição simples e direta.)
+
+            ## ⚠️ Radar de Prova (O que costuma cair?)
+            (Crie uma lista de bullet points. Foque em: pegadinhas comuns, exceções à regra, datas críticas ou contra-argumentos citados no texto.)
+
+            DIRETRIZES DE QUALIDADE:
+            - **Densidade:** Corte palavras vazias. Vá direto ao ponto.
+            - **Didática:** Use analogias se o conceito for muito abstrato.
+            - **Fidelidade:** Baseie-se EXCLUSIVAMENTE no texto fornecido abaixo.
+
+            TEXTO BASE:
+            {text}
+            """
         )
+
         resumo_chain = resumo_prompt | llm
+        print("Gerando Resumo...")
         resumo = resumo_chain.invoke({"text": context_text})
         parser = PydanticOutputParser(pydantic_object=QCM_Output)
         qcm_prompt = PromptTemplate.from_template(
-            "Com base no texto fornecido, gere **EXATAMENTE 5** questões de múltipla escolha (QCM). Cada questão deve ter **4 opções** de resposta (A, B, C, D) e uma única resposta correta. Use a formatação JSON específica do esquema Pydantic. TEXTO: {text}\n\n{format_instructions}"
+            """
+            Atue como uma Banca Examinadora Rigorosa. Sua tarefa é criar um exame de múltipla escolha de nível INTERMEDIÁRIO/DIFÍCIL baseado no texto.
+
+            REGRAS DE CRIAÇÃO DE QUESTÕES:
+            1. **Foco na Interpretação:** Evite perguntas que podem ser respondidas apenas procurando uma palavra-chave. A pergunta deve exigir entendimento do contexto.
+            2. **Distratores Plausíveis:** As alternativas erradas NÃO devem ser absurdas. Elas devem parecer corretas para um aluno desatento (ex: "quase certo, mas com um detalhe errado").
+            3. **Sem Pegadinhas Baratas:** Evite "Todas as anteriores" ou "Nenhuma das anteriores".
+            4. **Formato:** Gere EXATAMENTE 5 questões.
+            5. **Output:** Apenas JSON cru seguindo o formato solicitado.
+
+            TEXTO BASE PARA AS QUESTÕES:
+            {text}
+
+            {format_instructions}
+            """
         )
         qcm_chain = qcm_prompt.partial(format_instructions=parser.get_format_instructions()) | llm
-        qcm_raw = qcm_chain.invoke({"text": resumo})
+        print("Gerando Questões...")
+        qcm_raw = qcm_chain.invoke({"text": context_text})
         qcm_data = parser.parse(qcm_raw)
 
         return {

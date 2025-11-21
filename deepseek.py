@@ -44,14 +44,14 @@ class DeepSeekError(Exception):
 def _cfg(key, default=None):
     return (current_app.config.get(key) if current_app else None) or os.getenv(key, default)
 
-def chat(messages: list, model: str = "deepseek-chat", temperature: float = 0.7, timeout: int | None = None) -> str:
+def chat(messages: list, model: str = "deepseek-chat", temperature: float = 0.3, timeout: int | None = None) -> str:
     api_key  = _cfg('DEEPSEEK_API_KEY')
     endpoint = _cfg('DEEPSEEK_ENDPOINT', 'https://api.deepseek.com/v1/chat/completions')  # <- /v1
     if not api_key:
         raise DeepSeekError("Serviço de IA não configurado.", detail="DEEPSEEK_API_KEY ausente")
 
     req_timeout = timeout or int(_cfg('AI_TIMEOUT_SECONDS', 90))     # antes era 30s
-    max_tokens  = int(_cfg('AI_MAX_TOKENS', 1200))                   # limite p/ resposta
+    max_tokens  = int(_cfg('AI_MAX_TOKENS', 8000))                   # limite p/ resposta
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
