@@ -34,7 +34,6 @@ def load_document(file_path: str) -> str:
 
     docs = loader.load()
 
-    # 2.2. Junta o conteúdo de todas as páginas em uma string
     full_text = " ".join(doc.page_content for doc in docs)
     return full_text
 
@@ -114,7 +113,7 @@ def process_study_material(file_path: str, titulo: Optional[str] = "Estudo Gerad
             "status": "completed",
             "titulo": titulo,
             "resumo": resumo,
-            "qcm_json": qcm_data.dict()  # Converte o objeto Pydantic para dicionário
+            "qcm_json": qcm_data.dict()
         }
 
     except ValueError as e:

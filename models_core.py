@@ -6,21 +6,14 @@ import json
 from flask_login import UserMixin
 
 
-# --- Funções de Ajuda ---
 def now_brazil():
     """Retorna a data e hora atual no fuso horário de Brasília."""
     fuso_brasilia = timezone('America/Sao_Paulo')
     return datetime.now(fuso_brasilia)
 
 
-# --- Função Principal para Ligar os Modelos ao DB ---
 def define_models(db_instance):
-    """
-    Define e retorna as classes Usuario, Estudo e Questao, ligando-as à instância do DB
-    passada como argumento (db_instance).
-    """
 
-    # --- MODELO USUARIO (COPIADO DO FLASK) ---
     class Usuario(db_instance.Model, UserMixin):
         __tablename__ = 'usuario'  # Garante o mesmo nome de tabela do Flask
         id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -36,7 +29,6 @@ def define_models(db_instance):
 
         estudos: Mapped[list["Estudo"]] = relationship("Estudo", back_populates="usuario")
 
-    # --- MODELO ESTUDO ---
     class Estudo(db_instance.Model):
         __tablename__ = 'estudos'
 
@@ -52,7 +44,6 @@ def define_models(db_instance):
                                                          cascade="all, delete-orphan")
         usuario: Mapped["Usuario"] = relationship("Usuario", back_populates="estudos")
 
-    # --- MODELO QUESTAO ---
     class Questao(db_instance.Model):
         __tablename__ = 'questoes'
 
