@@ -5,15 +5,12 @@ from pytz import timezone
 import json
 from flask_login import UserMixin
 
-
 def now_brazil():
     """Retorna a data e hora atual no fuso horário de Brasília."""
     fuso_brasilia = timezone('America/Sao_Paulo')
     return datetime.now(fuso_brasilia)
 
-
 def define_models(db_instance):
-
     class Usuario(db_instance.Model, UserMixin):
         __tablename__ = 'usuario'  # Garante o mesmo nome de tabela do Flask
         id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -39,7 +36,6 @@ def define_models(db_instance):
         resumo: Mapped[str] = mapped_column(Text, nullable=False)
         status: Mapped[str] = mapped_column(String(50), default='processando', nullable=False)
         caminho_arquivo: Mapped[str | None] = mapped_column(String(512), nullable=True)
-
         questoes: Mapped[list["Questao"]] = relationship("Questao", back_populates="estudo", lazy='dynamic',
                                                          cascade="all, delete-orphan")
         usuario: Mapped["Usuario"] = relationship("Usuario", back_populates="estudos")
@@ -49,22 +45,17 @@ def define_models(db_instance):
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True)
         estudo_id: Mapped[int] = mapped_column(Integer, ForeignKey('estudos.id'), nullable=False)
-
         pergunta: Mapped[str] = mapped_column(Text, nullable=False)
         opcoes_json: Mapped[str] = mapped_column(Text, nullable=False)
         resposta_correta: Mapped[str] = mapped_column(String(255), nullable=False)
-
         resposta_usuario: Mapped[str | None] = mapped_column(String(255), nullable=True)
         correta: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-
         estudo: Mapped["Estudo"] = relationship("Estudo", back_populates="questoes")
-
         @property
         def opcoes(self):
             try:
                 return json.loads(self.opcoes_json)
             except json.JSONDecodeError:
                 return []
-
     return Usuario, Estudo, Questao
 

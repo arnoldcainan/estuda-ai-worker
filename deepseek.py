@@ -6,12 +6,10 @@ class DeepSeekLLM:
     """
     Classe Wrapper para usar a função chat do DeepSeek em contextos como LangChain.
     """
-
     def __init__(self, model: str = "deepseek-chat", temperature: float = 0.7):
         self.model = model
         self.temperature = temperature
-
-    def invoke(self, prompt) -> str:  # ATENÇÃO: Remova o type hint 'str' do argumento
+    def invoke(self, prompt) -> str:
         """
         Adapta a chamada de string única do LangChain para o formato de mensagens da API.
         """
@@ -19,16 +17,12 @@ class DeepSeekLLM:
             prompt_str = prompt.to_string()
         else:
             prompt_str = str(prompt)
-
         messages = [{"role": "user", "content": prompt_str}]
-
         return chat(
             messages=messages,
             model=self.model,
             temperature=self.temperature
         )
-
-    # Opcional: Para compatibilidade com outras interfaces LLM
     def __call__(self, prompt: str) -> str:
         return self.invoke(prompt)
 
@@ -45,13 +39,11 @@ def _cfg(key, default=None):
 
 def chat(messages: list, model: str = "deepseek-chat", temperature: float = 0.3, timeout: int | None = None) -> str:
     api_key  = _cfg('DEEPSEEK_API_KEY')
-    endpoint = _cfg('DEEPSEEK_ENDPOINT', 'https://api.deepseek.com/v1/chat/completions')  # <- /v1
+    endpoint = _cfg('DEEPSEEK_ENDPOINT', 'https://api.deepseek.com/v1/chat/completions')
     if not api_key:
         raise DeepSeekError("Serviço de IA não configurado.", detail="DEEPSEEK_API_KEY ausente")
-
-    req_timeout = timeout or int(_cfg('AI_TIMEOUT_SECONDS', 90))     # antes era 30s
-    max_tokens  = int(_cfg('AI_MAX_TOKENS', 8000))                   # limite p/ resposta
-
+    req_timeout = timeout or int(_cfg('AI_TIMEOUT_SECONDS', 90))
+    max_tokens  = int(_cfg('AI_MAX_TOKENS', 8000))
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model,
@@ -59,12 +51,10 @@ def chat(messages: list, model: str = "deepseek-chat", temperature: float = 0.3,
         "temperature": temperature,
         "max_tokens": max_tokens
     }
-
     try:
         resp = requests.post(endpoint, json=payload, headers=headers, timeout=(10, req_timeout))
     except requests.RequestException as e:
         raise DeepSeekError("Falha de conexão com o serviço de IA. Tente novamente mais tarde.", detail=str(e))
-
     if resp.status_code == 401:
         raise DeepSeekError("Serviço de IA indisponível no momento.", http_status=401, detail="401 Unauthorized")
     if resp.status_code == 402:
@@ -77,7 +67,6 @@ def chat(messages: list, model: str = "deepseek-chat", temperature: float = 0.3,
         except Exception:
             info = resp.text
         raise DeepSeekError("Serviço de IA indisponível no momento.", http_status=resp.status_code, detail=str(info))
-
     try:
         data = resp.json()
         return data["choices"][0]["message"]["content"]

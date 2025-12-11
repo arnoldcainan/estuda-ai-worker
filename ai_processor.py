@@ -7,13 +7,11 @@ from pydantic import BaseModel, Field
 from langchain_core.output_parsers import PydanticOutputParser
 from deepseek import DeepSeekLLM
 
-
 class Questao(BaseModel):
     """Modelo Pydantic para uma única questão de múltipla escolha."""
     pergunta: str = Field(description="A pergunta de múltipla escolha baseada no texto.")
     opcoes: List[str] = Field(description="Lista de 4 opções de resposta, incluindo a correta.")
     resposta_correta: str = Field(description="A resposta correta (deve ser idêntica a uma das opções).")
-
 
 class QCM_Output(BaseModel):
     """Modelo Pydantic para o conjunto completo de questões."""
@@ -22,7 +20,6 @@ class QCM_Output(BaseModel):
 def load_document(file_path: str) -> str:
     """Carrega o conteúdo de um documento (PDF/DOCX/TXT) e o retorna como texto simples."""
     file_extension = os.path.splitext(file_path)[1].lower()
-
     if file_extension == '.pdf':
         loader = PyPDFLoader(file_path)
     elif file_extension == '.docx':
@@ -31,9 +28,7 @@ def load_document(file_path: str) -> str:
         loader = TextLoader(file_path, encoding='utf-8')
     else:
         raise ValueError(f"Extensão de arquivo não suportada: {file_extension}")
-
     docs = loader.load()
-
     full_text = " ".join(doc.page_content for doc in docs)
     return full_text
 
@@ -43,16 +38,13 @@ def process_study_material(file_path: str, titulo: Optional[str] = "Estudo Gerad
     """
     try:
         full_text = load_document(file_path)
-
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=4000,
             chunk_overlap=200
         )
         texts = text_splitter.create_documents([full_text])
         context_text = texts[0].page_content if texts else full_text[:80000]
-
         llm = DeepSeekLLM()
-
         resumo_prompt = PromptTemplate.from_template(
             """
             Você é um Professor Sênior de Cursinho Preparatório, especialista em sintetizar conteúdos complexos para estudantes de alto rendimento.
@@ -82,7 +74,6 @@ def process_study_material(file_path: str, titulo: Optional[str] = "Estudo Gerad
             {text}
             """
         )
-
         resumo_chain = resumo_prompt | llm
         print("Gerando Resumo...")
         resumo = resumo_chain.invoke({"text": context_text})
@@ -108,14 +99,12 @@ def process_study_material(file_path: str, titulo: Optional[str] = "Estudo Gerad
         print("Gerando Questões...")
         qcm_raw = qcm_chain.invoke({"text": context_text})
         qcm_data = parser.parse(qcm_raw)
-
         return {
             "status": "completed",
             "titulo": titulo,
             "resumo": resumo,
             "qcm_json": qcm_data.dict()
         }
-
     except ValueError as e:
         return {"status": "failed", "error": f"Erro de validação: {e}"}
     except Exception as e:

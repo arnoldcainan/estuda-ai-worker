@@ -5,7 +5,6 @@ import os
 import logging
 import boto3
 
-# Configuração de Logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
@@ -41,7 +40,6 @@ def update_db_on_failure(estudo_id, error_msg):
             log.critical(f"ERRO CRÍTICO ao atualizar falha no DB para {estudo_id}: {e}", exc_info=True)
             database.session.rollback()
 
-
 def callback(ch, method, properties, body):
     try:
         payload = json.loads(body)
@@ -52,9 +50,7 @@ def callback(ch, method, properties, body):
             log.error(f"Mensagem inválida: {payload}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
-
         log.info(f"Recebida Tarefa ID: {estudo_id}. Arquivo na Nuvem: {filename}")
-
         local_temp_path = os.path.join('/tmp', filename)
         try:
             log.info("Baixando arquivo do Cloudflare R2...")
@@ -64,20 +60,16 @@ def callback(ch, method, properties, body):
         except Exception as e:
             log.error(f"Erro ao baixar do R2: {e}")
             raise FileNotFoundError(f"Não foi possível baixar {filename} da nuvem.")
-
         ia_result = process_study_material(local_temp_path)
-
         if ia_result['status'] == 'completed':
             with worker_app.app_context():
                 estudo = database.session.get(Estudo, estudo_id)
                 if estudo:
                     estudo.resumo = ia_result['resumo']
                     estudo.status = 'pronto'
-
                     qcm_data = ia_result['qcm_json']
                     Questao.query.filter_by(estudo_id=estudo.id).delete()
                     database.session.flush()
-
                     for q_data in qcm_data['questoes']:
                         nova_questao = Questao(
                             estudo_id=estudo.id,
@@ -86,16 +78,12 @@ def callback(ch, method, properties, body):
                             resposta_correta=q_data['resposta_correta']
                         )
                         database.session.add(nova_questao)
-
                     database.session.commit()
                     log.info(f"Sucesso! Estudo ID {estudo_id} salvo.")
-
-                    # 4. Limpeza: Apagar o arquivo temporário
                     if os.path.exists(local_temp_path):
                         os.remove(local_temp_path)
 
                 ch.basic_ack(delivery_tag=method.delivery_tag)
-
         else:
             error_msg = ia_result.get('error', 'Erro desconhecido da IA.')
             raise Exception(f"Retorno de falha da IA: {error_msg}")
@@ -109,12 +97,10 @@ def callback(ch, method, properties, body):
             if os.path.exists(local_temp_path):
                 os.remove(local_temp_path)
         except: pass
-
 def start_worker():
     log.info("------------------------------------------------")
     log.info("AI-WORKER INICIANDO (PRODUÇÃO RAILWAY + R2)...")
     log.info("------------------------------------------------")
-
     retries = 0
     while True:
         try:
@@ -144,7 +130,6 @@ def start_worker():
         except Exception as e:
             log.critical(f"Erro inesperado: {e}", exc_info=True)
             time.sleep(5)
-
 if __name__ == '__main__':
     with worker_app.app_context():
         try:
